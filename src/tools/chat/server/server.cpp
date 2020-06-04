@@ -180,8 +180,8 @@ int main(int argc, char* argv[]) {
         }
 
     QUIC_ADDR Address = {};
-    QuicAddrSetFamily(&Address, AF_UNSPEC);
-    QuicAddrSetPort(&Address, UdpPort);
+    Address.si_family = AF_UNSPEC;
+    Address.Ipv4.sin_port = QuicNetByteSwapShort(UdpPort);
 
     const uint16_t PeerStreamCount = 1;
     HQUIC Listener = nullptr;
