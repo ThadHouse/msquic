@@ -1,0 +1,6 @@
+LIBRARY quicchatclientlib
+
+EXPORTS
+    QuicChatClientStart
+    QuicChatClientEnd
+    QuicChatSendMessage

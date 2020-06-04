@@ -14,7 +14,7 @@ Abstract:
 const QUIC_REGISTRATION_CONFIG RegConfig = { "quicsample", QUIC_EXECUTION_PROFILE_LOW_LATENCY };
 const QUIC_BUFFER Alpn = { sizeof("sample") - 1, (uint8_t*)"sample" };
 const uint16_t UdpPort = 4567;
-const uint64_t IdleTimeoutMs = 1000;
+const uint64_t IdleTimeoutMs = 10000;
 const uint32_t SendBufferLength = 100;
 
 const QUIC_API_TABLE* MsQuic;
@@ -76,7 +76,7 @@ ServerStreamCallback(
         printf("[strm][%p] Data sent\n", Stream);
         break;
     case QUIC_STREAM_EVENT_RECEIVE:
-        printf("[strm][%p] Data received\n", Stream);
+        printf("[strm][%p] Data received %d %d\n", Stream, (int)Event->RECEIVE.TotalBufferLength, Event->RECEIVE.BufferCount);
         break;
     case QUIC_STREAM_EVENT_PEER_SEND_SHUTDOWN:
         printf("[strm][%p] Peer shutdown\n", Stream);
@@ -91,6 +91,7 @@ ServerStreamCallback(
         MsQuic->StreamClose(Stream);
         break;
     default:
+        printf("Server received default %d\n", Event->Type);
         break;
     }
     return QUIC_STATUS_SUCCESS;
@@ -227,7 +228,7 @@ ClientStreamCallback(
         printf("[strm][%p] Data sent\n", Stream);
         break;
     case QUIC_STREAM_EVENT_RECEIVE:
-        printf("[strm][%p] Data received\n", Stream);
+        printf("[strm][%p] Data received %d %d\n", Stream, (int)Event->RECEIVE.TotalBufferLength, Event->RECEIVE.BufferCount);
         break;
     case QUIC_STREAM_EVENT_PEER_SEND_ABORTED:
         printf("[strm][%p] Peer aborted\n", Stream);
