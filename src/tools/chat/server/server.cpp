@@ -1,11 +1,10 @@
 #include "msquicpublichelper.h"
 
 #include <mutex>
-#include <unordered_set>
+#include <unordered_map>
 #include <string>
-
-#pragma warning(disable: 4100)
-#pragma warning(disable: 4505)
+#include <cstring>
+#include <algorithm>
 
 std::mutex setMutex;
 std::unordered_map<HQUIC, std::string> streamMap;

@@ -328,7 +328,7 @@ GetSecConfigForThumbprintAndStore(
     }
 
     size_t StoreNameLen = strlen(StoreName);
-    std::copy_n(StoreName, min(StoreNameLen, sizeof(CertHashStore.StoreName)), CertHashStore.StoreName);
+    std::copy_n(StoreName, (std::min)(StoreNameLen, sizeof(CertHashStore.StoreName)), CertHashStore.StoreName);
 
     CertHashStore.Flags = Flags;
 

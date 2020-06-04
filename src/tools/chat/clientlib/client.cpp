@@ -49,9 +49,6 @@ QuicStatusToString(
     return "UNKNOWN";
 }
 
-#pragma warning(disable: 4100)
-#pragma warning(disable: 4505)
-
 const QUIC_API_TABLE* MsQuic = nullptr;
 std::string Name;
 std::string IpAddress;
@@ -198,7 +195,7 @@ static void ClientOpenStream(HQUIC connection) {
 
 static QUIC_STATUS QUIC_API ClientConnectionCallback(
     HQUIC connection,
-    void* context,
+    void* /*context*/,
     QUIC_CONNECTION_EVENT* event
 ) {
     switch (event->Type) {
