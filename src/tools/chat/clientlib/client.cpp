@@ -18,6 +18,8 @@ Abstract:
 #include <mutex>
 #include <condition_variable>
 #include <string>
+#include <cstring>
+#include <algorithm>
 
 inline
 _Null_terminated_

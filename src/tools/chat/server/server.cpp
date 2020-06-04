@@ -21,7 +21,7 @@ QUIC_SEC_CONFIG* SecurityConfig;
 static QUIC_BUFFER* CloneBuffer(const QUIC_BUFFER* buf) {
     auto newBufRaw = malloc(sizeof(QUIC_BUFFER) + buf->Length);
     auto data = (uint8_t*)newBufRaw + sizeof(QUIC_BUFFER);
-    std::copy_n(buf->Buffer, buf->Length, data);
+    std::copy_n(buf->Buffer, (size_t)buf->Length, data);
     auto newBuf = (QUIC_BUFFER*)newBufRaw;
     newBuf->Buffer = data;
     newBuf->Length = buf->Length;
@@ -120,7 +120,7 @@ ServerConnectionCallback(
             std::lock_guard lock{setMutex};
             streamMap[Event->PEER_STREAM_STARTED.Stream] = "Unknown";
         }
-        MsQuic->SetCallbackHandler(Event->PEER_STREAM_STARTED.Stream, ServerStreamCallback, nullptr);
+        MsQuic->SetCallbackHandler(Event->PEER_STREAM_STARTED.Stream, (void*)ServerStreamCallback, nullptr);
         break;
     default:
         break;
@@ -139,7 +139,7 @@ ServerListenerCallback(
     switch (Event->Type) {
     case QUIC_LISTENER_EVENT_NEW_CONNECTION:
         Event->NEW_CONNECTION.SecurityConfig = SecurityConfig;
-        MsQuic->SetCallbackHandler(Event->NEW_CONNECTION.Connection, ServerConnectionCallback, nullptr);
+        MsQuic->SetCallbackHandler(Event->NEW_CONNECTION.Connection, (void*)ServerConnectionCallback, nullptr);
         break;
     default:
         break;
