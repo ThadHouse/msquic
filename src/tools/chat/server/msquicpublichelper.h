@@ -26,8 +26,11 @@ Environment:
 #include <stdio.h>
 #include <stdlib.h>
 
+
 #if defined(__cplusplus)
 #include <future>
+#include <cstring>
+#include <algorithm>
 #endif
 
 //
