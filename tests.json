@@ -1,0 +1,10 @@
+[
+    {
+        "name": "Loopback 4k Tests",
+        "file": "tests/loopback/4k/results.csv"
+    },
+    {
+        "name": "Loopback 16k Tests",
+        "file": "tests/loopback/16k/results.csv"
+    }
+]
