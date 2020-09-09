@@ -41,6 +41,8 @@ QuicPacketSpaceInitialize(
 
     *NewPackets = Packets;
 
+    QuicPerfCounterIncrement(QUIC_PERF_COUNTER_PACKET_SPACE_ALLOC);
+
     return QUIC_STATUS_SUCCESS;
 }
 
@@ -62,6 +64,8 @@ QuicPacketSpaceUninitialize(
     }
 
     QuicAckTrackerUninitialize(&Packets->AckTracker);
+
+    QuicPerfCounterIncrement(QUIC_PERF_COUNTER_PACKET_SPACE_FREE);
 
     uint32_t CurProcIndex = QuicProcCurrentNumber();
     QuicPoolFree(&MsQuicLib.PerProc[CurProcIndex].PacketSpacePool, Packets);
