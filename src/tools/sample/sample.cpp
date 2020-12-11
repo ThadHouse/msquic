@@ -823,6 +823,19 @@ Error:
         MsQuicClose(MsQuic);
     }
 
+    {
+        ms::quic::Library Library;
+        ms::quic::Registration Reg = Library.CreateRegistration();
+        ms::quic::Configuration Config = Reg.CreateConfiguration({"Hello"});
+        printf("%p\n", Config.GetTable());
+    }
+
+    {
+        ms::quic::Library Library;
+        ms::quic::Registration Reg{Library};
+        ms::quic::Configuration Config{Reg, {"Hello"}};
+        printf("%p\n", Config.GetTable());
+    }
 
     return (int)Status;
 }
