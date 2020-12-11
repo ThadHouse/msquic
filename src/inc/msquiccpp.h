@@ -10,6 +10,7 @@ class Registration;
 class Connection;
 class Stream;
 class Library;
+class Listener;
 class Configuration;
 
 template <class T>
@@ -241,6 +242,7 @@ public:
     inline Configuration CreateConfiguration(const Alpn& Alpn, const CredentialConfig& CredConfig) const noexcept;
     inline Configuration CreateConfiguration(const Alpn& Alpn, const Settings& Settings) const noexcept;
     inline Configuration CreateConfiguration(const Alpn& Alpn, const Settings& Settings, const CredentialConfig& CredConfig) const noexcept;
+    inline Listener CreateListener() const noexcept;
 
 private:
     void Close() {
@@ -364,15 +366,29 @@ private:
         HQUIC Listener {nullptr};
         Library Library;
     };
+
+    explicit Listener(const Listener& List, bool) noexcept : Base{List.GetTable()} {
+        Storage = List.Storage;
+    }
 public:
 
     explicit Listener(const Registration& Reg) noexcept : Base{Reg} {
         Storage = new(std::nothrow) DataStore{Reg};
         if (!*this) return;
-        // Add ref when creating listener
-        // Close event will remove a ref.
-        // If function fails, remove the added ref.
-        Storage->InitStatus = GetTable()->ListenerOpen(Reg, nullptr, nullptr, &Storage->Listener);
+
+        Listener* StoredListener = new Listener{*this, false};
+
+        Storage->InitStatus = GetTable()->ListenerOpen(Reg,
+            [](HQUIC Handle, void* Context, QUIC_LISTENER_EVENT* Event) noexcept -> QUIC_STATUS {
+                UNREFERENCED_PARAMETER(Handle);
+                UNREFERENCED_PARAMETER(Context);
+                UNREFERENCED_PARAMETER(Event);
+                return QUIC_STATUS_SUCCESS;
+            }
+        , StoredListener, &Storage->Listener);
+        if (FAILED(Storage->InitStatus)) {
+            delete StoredListener;
+        }
     }
 
     ~Listener() noexcept {
@@ -446,6 +462,10 @@ inline Configuration Registration::CreateConfiguration(const Alpn& Alpn, const S
 
 inline Configuration Registration::CreateConfiguration(const Alpn& Alpn, const Settings& Settings, const CredentialConfig& CredConfig) const noexcept {
     return Configuration{*this, Alpn, Settings, CredConfig};
+}
+
+inline Listener Registration::CreateListener() const noexcept {
+    return Listener{*this};
 }
 
 // class Registration {
