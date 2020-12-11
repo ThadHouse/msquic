@@ -20,6 +20,7 @@ Abstract:
 #include <msquic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <msquiccpp.h>
 
 //
 // The (optional) registration configuration for the app. This sets a name for
@@ -821,6 +822,7 @@ Error:
         }
         MsQuicClose(MsQuic);
     }
+
 
     return (int)Status;
 }
