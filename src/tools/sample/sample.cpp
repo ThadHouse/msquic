@@ -823,19 +823,19 @@ Error:
         MsQuicClose(MsQuic);
     }
 
-    {
-        ms::quic::Library Library;
-        ms::quic::Registration Reg = Library.CreateRegistration();
-        ms::quic::Configuration Config = Reg.CreateConfiguration({"Hello"});
-        ms::quic::Listener Listener = Reg.CreateListener();
-    }
-    // or
-    {
-        ms::quic::Library Library;
-        ms::quic::Registration Reg{Library};
-        ms::quic::Configuration Config{Reg, {"Hello"}};
-        ms::quic::Listener Listener{Reg};
-    }
+    //{
+    //    ms::quic::Library Library;
+    //    ms::quic::Registration Reg = Library.CreateRegistration();
+    //    ms::quic::Configuration Config = Reg.CreateConfiguration({"Hello"});
+    //    ms::quic::Listener Listener = Reg.CreateListener();
+    //}
+    //// or
+    //{
+    //    ms::quic::Library Library;
+    //    ms::quic::Registration Reg{Library};
+    //    ms::quic::Configuration Config{Reg, {"Hello"}};
+    //    ms::quic::Listener Listener{Reg};
+    // }
 
     return (int)Status;
 }

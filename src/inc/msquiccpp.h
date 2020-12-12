@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <string>
+#include <functional>
 
 namespace ms::quic {
 class Registration;
@@ -12,6 +13,7 @@ class Stream;
 class Library;
 class Listener;
 class Configuration;
+class Connection;
 
 template <class T>
 class Base {
@@ -20,6 +22,7 @@ protected:
     struct BaseDataStore {
         std::atomic_int RefCount{1};
         QUIC_STATUS InitStatus;
+        std::function<void()> DeletedFunc;
     };
     const QUIC_API_TABLE* ApiTable {nullptr};
 
@@ -59,16 +62,32 @@ public:
     constexpr const QUIC_API_TABLE* GetTable() const noexcept {
         return ApiTable;
     }
+
+    T& OnDeleted(std::function<void()> Deleter) noexcept {
+        static_cast<T*>(this)->Storage->DeletedFunc = std::move(Deleter);
+        return *static_cast<T*>(this);
+    }
+
+    const T& OnDeleted(std::function<void()> Deleter) const noexcept {
+        static_cast<const T*>(this)->Storage->DeletedFunc = std::move(Deleter);
+        return *static_cast<const T*>(this);
+    }
 protected:
     void AddRef() noexcept {
         static_cast<T*>(this)->Storage->RefCount.fetch_add(1);
     }
     bool Release() noexcept {
         if (static_cast<T*>(this)->Storage) {
-            return static_cast<T*>(this)->Storage->RefCount.fetch_sub(1) == 0;
+            return static_cast<T*>(this)->Storage->RefCount.fetch_sub(1) == 1;
         }
         // Return false if already deleted
         return false;
+    }
+    void CallDeleter() noexcept {
+        auto Deleter = std::move(static_cast<T*>(this)->Storage->DeletedFunc);
+        if (Deleter) {
+            Deleter();
+        }
     }
 };
 
@@ -124,6 +143,7 @@ private:
             if (ApiTable) {
                 MsQuicClose(ApiTable);
             }
+            CallDeleter();
             delete Storage;
             Storage = nullptr;
         }
@@ -250,6 +270,7 @@ private:
             if (Storage->Registration) {
                 GetTable()->RegistrationClose(Storage->Registration);
             }
+            CallDeleter();
             delete Storage;
             Storage = nullptr;
         }
@@ -262,11 +283,12 @@ private:
 class Configuration : public Base<Configuration> {
 private:
     struct DataStore : public Base<Configuration>::BaseDataStore {
-        DataStore(const Registration& Reg) noexcept : Library{Reg} {
+        DataStore(const Registration& Reg) noexcept : Library{Reg}, Registration{Reg} {
             InitStatus = Reg;
         }
         HQUIC Configuration {nullptr};
         Library Library;
+        Registration Registration;
     };
 public:
 
@@ -348,6 +370,7 @@ private:
             if (Storage->Configuration) {
                 GetTable()->ConfigurationClose(Storage->Configuration);
             }
+            CallDeleter();
             delete Storage;
             Storage = nullptr;
         }
@@ -357,14 +380,134 @@ private:
     friend class Base<Configuration>;
 };
 
+class Connection : Base<Connection> {
+private:
+    struct DataStore : public Base<Connection>::BaseDataStore {
+        DataStore(const Registration& Reg) noexcept : Library{Reg}, Registration{Reg} {
+            InitStatus = Reg;
+        }
+        HQUIC Connection {nullptr};
+        std::function<QUIC_STATUS(QUIC_CONNECTION_EVENT*)> ConnectionCallback;
+        Library Library;
+        Registration Registration;
+    };
+    Connection(HQUIC Handle, const Registration& Reg) noexcept : Base{Reg} {
+        Storage = new(std::nothrow) DataStore{Reg};
+        if (!*this) return;
+        Storage->Connection = Handle;
+        Storage->InitStatus = QUIC_STATUS_SUCCESS;
+    }
+    Connection(DataStore* Store) noexcept : Base{Store->Library.GetTable()} {
+        this->Storage = Store;
+    }
+    QUIC_CONNECTION_CALLBACK_HANDLER ConnCallbackFunc() noexcept {
+        return [](HQUIC Handle, void* Context, QUIC_CONNECTION_EVENT* Event) noexcept -> QUIC_STATUS {
+                                DataStore* Storage = static_cast<DataStore*>(Context);
+
+                                QUIC_STATUS RetVal = QUIC_STATUS_SUCCESS;
+                                if (Storage->ConnectionCallback) {
+                                    RetVal = Storage->ConnectionCallback(Event);
+                                }
+
+                                if (Event->Type == QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE) {
+                                    Connection Conn{Storage};
+                                    Conn.Close();
+                                }
+
+                                UNREFERENCED_PARAMETER(Handle);
+                                return RetVal;
+                            };
+    }
+    friend class Listener;
+public:
+    explicit Connection(const Registration& Reg) noexcept : Base{Reg} {
+        Storage = new(std::nothrow) DataStore{Reg};
+        if (!*this) return;
+        // Add ref to keep alive in callback
+        AddRef();
+        Storage->InitStatus = GetTable()->ConnectionOpen(Reg,
+        ConnCallbackFunc(), Storage, &Storage->Connection);
+        if (FAILED(Storage->InitStatus)) {
+            Release();
+        }
+    }
+    ~Connection() noexcept {
+        Close();
+    }
+
+    Connection(const Connection& Other) noexcept : Base{Other} {
+        Storage = Other.Storage;
+        AddRef();
+    }
+
+    Connection& operator=(const Connection& Other) noexcept {
+        Close();
+        Base::operator=(Other);
+
+        Storage = Other.Storage;
+        AddRef();
+    }
+
+    Connection(Connection&& Other) noexcept : Base{Other} {
+        Storage = Other.Storage;
+        Other.Storage = nullptr;
+    }
+
+    Connection& operator=(Connection&& Other) noexcept {
+        Close();
+        Base::operator=(Other);
+
+        Storage = Other.Storage;
+        Other.Storage = nullptr;
+    }
+
+    operator const Library&() const noexcept {
+        return Storage->Library;
+    }
+
+    operator HQUIC() const noexcept {
+        return Storage->Connection;
+    }
+
+    QUIC_STATUS Start(const Configuration& Config, QUIC_ADDRESS_FAMILY Af, std::string ServerName, uint16_t ServerPort) noexcept {
+        return GetTable()->ConnectionStart(*this, Config, Af, ServerName.c_str(), ServerPort);
+    }
+
+    QUIC_STATUS SetConfiguration(const Configuration& Config) noexcept {
+        return GetTable()->ConnectionSetConfiguration(*this, Config);
+    }
+
+    // TODO Make this required on server side.
+    Connection& SetConnectionFunc(std::function<QUIC_STATUS(QUIC_CONNECTION_EVENT*)> Func) noexcept {
+        Storage->ConnectionCallback = std::move(Func);
+        return *this;
+    }
+
+private:
+    void Close() {
+        if (Release()) {
+            if (Storage->Connection) {
+                GetTable()->ConnectionClose(Storage->Connection);
+            }
+            CallDeleter();
+            delete Storage;
+            Storage = nullptr;
+        }
+    }
+    DataStore* Storage {nullptr};
+    friend class Base<Connection>;
+};
+
 class Listener : public Base<Listener> {
 private:
     struct DataStore: public Base<Listener>::BaseDataStore {
-        DataStore(const Registration& Reg) noexcept : Library{Reg} {
+        DataStore(const Registration& Reg) noexcept : Library{Reg}, Registration{Reg} {
             InitStatus = Reg;
         }
         HQUIC Listener {nullptr};
+        std::function<QUIC_STATUS(const QUIC_NEW_CONNECTION_INFO&, Connection&)> NewConnectionCallback;
         Library Library;
+        Registration Registration;
     };
 
     explicit Listener(const Listener& List, bool) noexcept : Base{List.GetTable()} {
@@ -376,19 +519,24 @@ public:
         Storage = new(std::nothrow) DataStore{Reg};
         if (!*this) return;
 
-        Listener* StoredListener = new Listener{*this, false};
-
         Storage->InitStatus = GetTable()->ListenerOpen(Reg,
             [](HQUIC Handle, void* Context, QUIC_LISTENER_EVENT* Event) noexcept -> QUIC_STATUS {
+                DataStore* Storage = static_cast<DataStore*>(Context);
+                switch (Event->Type) {
+                    case QUIC_LISTENER_EVENT_NEW_CONNECTION:
+                        if (Storage->NewConnectionCallback) {
+                            Connection Conn{Event->NEW_CONNECTION.Connection, Storage->Registration};
+                            Conn.AddRef();
+                            // TODO Error check the following call
+                            Storage->Library.GetTable()->SetCallbackHandler(Event->NEW_CONNECTION.Connection, (void*)Conn.ConnCallbackFunc(), Conn.Storage);
+                            return Storage->NewConnectionCallback(*Event->NEW_CONNECTION.Info, Conn);
+                        }
+                        return QUIC_STATUS_USER_CANCELED;
+                }
                 UNREFERENCED_PARAMETER(Handle);
-                UNREFERENCED_PARAMETER(Context);
-                UNREFERENCED_PARAMETER(Event);
                 return QUIC_STATUS_SUCCESS;
             }
-        , StoredListener, &Storage->Listener);
-        if (FAILED(Storage->InitStatus)) {
-            delete StoredListener;
-        }
+        , Storage, &Storage->Listener);
     }
 
     ~Listener() noexcept {
@@ -429,12 +577,30 @@ public:
         return Storage->Listener;
     }
 
+    Listener& SetListenerFunc(std::function<QUIC_STATUS(const QUIC_NEW_CONNECTION_INFO&, Connection&)> Func) noexcept {
+        Storage->NewConnectionCallback = std::move(Func);
+        return *this;
+    }
+
+    QUIC_STATUS Start(const Alpn& Alpn, uint16_t UdpPort) const noexcept {
+        QUIC_ADDR Address;
+        memset(&Address, 0, sizeof(Address));
+        QuicAddrSetFamily(&Address, QUIC_ADDRESS_FAMILY_UNSPEC);
+        QuicAddrSetPort(&Address, UdpPort);
+        return GetTable()->ListenerStart(*this, Alpn, 1, &Address);
+    }
+
+    void Stop() const noexcept {
+        GetTable()->ListenerStop(*this);
+    }
+
 private:
     void Close() {
         if (Release()) {
             if (Storage->Listener) {
                 GetTable()->ListenerClose(Storage->Listener);
             }
+            CallDeleter();
             delete Storage;
             Storage = nullptr;
         }
@@ -467,25 +633,4 @@ inline Configuration Registration::CreateConfiguration(const Alpn& Alpn, const S
 inline Listener Registration::CreateListener() const noexcept {
     return Listener{*this};
 }
-
-// class Registration {
-// private:
-//     struct DataStore {
-//         DataStore(const Library Lib) noexcept : Library{Lib} {
-//             InitStatus = Library;
-//         }
-//         QUIC_STATUS InitStatus;
-//         Library Library;
-//         std::atomic_int ReferenceCount {1};
-//     };
-// public:
-//     Registration(const Library& Lib) : Library{Lib} {
-//         if (!Library) {
-//             InitStatus = Library;
-//             return;
-//         }
-//     }
-// private:
-//     Library Library;
-// };
 }
