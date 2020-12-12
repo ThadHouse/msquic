@@ -62,111 +62,107 @@ void ServerSend(const ms::quic::Stream& Stream) {
     }
 }
 
-std::function<QUIC_STATUS(QUIC_STREAM_EVENT*)> ServerStreamCallback(ms::quic::Stream& Stream) {
-    return [Stream](QUIC_STREAM_EVENT* Event) -> QUIC_STATUS {
-        switch (Event->Type) {
-        case QUIC_STREAM_EVENT_SEND_COMPLETE:
-            //
-            // A previous StreamSend call has completed, and the context is being
-            // returned back to the app.
-            //
-            free(Event->SEND_COMPLETE.ClientContext);
-            printf("[strm][%p] Data sent\n", (HQUIC)Stream);
-            break;
-        case QUIC_STREAM_EVENT_RECEIVE:
-            //
-            // Data was received from the peer on the stream.
-            //
-            printf("[strm][%p] Data received\n", (HQUIC)Stream);
-            break;
-        case QUIC_STREAM_EVENT_PEER_SEND_SHUTDOWN:
-            //
-            // The peer gracefully shut down its send direction of the stream.
-            //
-            printf("[strm][%p] Peer shut down\n", (HQUIC)Stream);
-            ServerSend(Stream);
-            break;
-        case QUIC_STREAM_EVENT_PEER_SEND_ABORTED:
-            //
-            // The peer aborted its send direction of the stream.
-            //
-            printf("[strm][%p] Peer aborted\n", (HQUIC)Stream);
-            Stream.Shutdown(QUIC_STREAM_SHUTDOWN_FLAG_ABORT, 0);
-            break;
-        case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
-            //
-            // Both directions of the stream have been shut down and MsQuic is done
-            // with the stream. Cleanup can now safely occur.
-            // The Stream will be closed when all references are released.
-            // This event occuring will both release the callback, releasing any captures,
-            // and release the streams handle on itself.
-            //
-            printf("[strm][%p] All done\n", (HQUIC)Stream);
-            break;
-        default:
-            break;
-        }
-        return QUIC_STATUS_SUCCESS;
-    };
+QUIC_STATUS ServerStreamCallback(ms::quic::Stream& Stream, QUIC_STREAM_EVENT* Event) {
+    switch (Event->Type) {
+    case QUIC_STREAM_EVENT_SEND_COMPLETE:
+        //
+        // A previous StreamSend call has completed, and the context is being
+        // returned back to the app.
+        //
+        free(Event->SEND_COMPLETE.ClientContext);
+        printf("[strm][%p] Data sent\n", (HQUIC)Stream);
+        break;
+    case QUIC_STREAM_EVENT_RECEIVE:
+        //
+        // Data was received from the peer on the stream.
+        //
+        printf("[strm][%p] Data received\n", (HQUIC)Stream);
+        break;
+    case QUIC_STREAM_EVENT_PEER_SEND_SHUTDOWN:
+        //
+        // The peer gracefully shut down its send direction of the stream.
+        //
+        printf("[strm][%p] Peer shut down\n", (HQUIC)Stream);
+        ServerSend(Stream);
+        break;
+    case QUIC_STREAM_EVENT_PEER_SEND_ABORTED:
+        //
+        // The peer aborted its send direction of the stream.
+        //
+        printf("[strm][%p] Peer aborted\n", (HQUIC)Stream);
+        Stream.Shutdown(QUIC_STREAM_SHUTDOWN_FLAG_ABORT, 0);
+        break;
+    case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
+        //
+        // Both directions of the stream have been shut down and MsQuic is done
+        // with the stream. Cleanup can now safely occur.
+        // The Stream will be closed when all references are released.
+        // This event occuring will both release the callback, releasing any captures,
+        // and release the streams handle on itself.
+        //
+        printf("[strm][%p] All done\n", (HQUIC)Stream);
+        break;
+    default:
+        break;
+    }
+    return QUIC_STATUS_SUCCESS;
 }
 
-std::function<QUIC_STATUS(QUIC_CONNECTION_EVENT*)> ServerConnectionCallback(ms::quic::Connection& Connection) {
-    return [Connection](QUIC_CONNECTION_EVENT* Event) -> QUIC_STATUS {
-        switch (Event->Type) {
-        case QUIC_CONNECTION_EVENT_CONNECTED:
-            //
-            // The handshake has completed for the connection.
-            //
-            printf("[conn][%p] Connected\n", (HQUIC)Connection);
-            Connection.SendResumptionTicket(QUIC_SEND_RESUMPTION_FLAG_NONE, nullptr, 0);
-            break;
-        case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_TRANSPORT:
-            //
-            // The connection has been shut down by the transport. Generally, this
-            // is the expected way for the connection to shut down with this
-            // protocol, since we let idle timeout kill the connection.
-            //
-            printf("[conn][%p] Shut down by transport, 0x%x\n", (HQUIC)Connection, Event->SHUTDOWN_INITIATED_BY_TRANSPORT.Status);
-            break;
-        case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER:
-            //
-            // The connection was explicitly shut down by the peer.
-            //
-            printf("[conn][%p] Shut down by peer, 0x%llu\n", (HQUIC)Connection, (unsigned long long)Event->SHUTDOWN_INITIATED_BY_PEER.ErrorCode);
-            break;
-        case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
-            //
-            // The connection has completed the shutdown process and is ready to be
-            // safely cleaned up. Cleanup can now safely occur.
-            // The connection will be closed when all references are released.
-            // This event occuring will both release the callback, releasing any captures,
-            // and release the connection handle on itself.
-            //
-            printf("[conn][%p] All done\n", (HQUIC)Connection);
-            break;
-        case QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED:
-        {
-            //
-            // The peer has started/created a new stream. The app MUST set the
-            // callback handler before returning.
-            //
-            printf("[strm][%p] Peer started\n", Event->PEER_STREAM_STARTED.Stream);
-            auto strm = Connection.GetPeerStream(Event);
-            strm.SetStreamFunc(ServerStreamCallback(strm));
-            break;
-        }
-        case QUIC_CONNECTION_EVENT_RESUMED:
-            //
-            // The connection succeeded in doing a TLS resumption of a previous
-            // connection's session.
-            //
-            printf("[conn][%p] Connection resumed!\n", (HQUIC)Connection);
-            break;
-        default:
-            break;
-        }
-        return QUIC_STATUS_SUCCESS;
-    };
+QUIC_STATUS ServerConnectionCallback(ms::quic::Connection& Connection, QUIC_CONNECTION_EVENT* Event) {
+    switch (Event->Type) {
+    case QUIC_CONNECTION_EVENT_CONNECTED:
+        //
+        // The handshake has completed for the connection.
+        //
+        printf("[conn][%p] Connected\n", (HQUIC)Connection);
+        Connection.SendResumptionTicket(QUIC_SEND_RESUMPTION_FLAG_NONE, nullptr, 0);
+        break;
+    case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_TRANSPORT:
+        //
+        // The connection has been shut down by the transport. Generally, this
+        // is the expected way for the connection to shut down with this
+        // protocol, since we let idle timeout kill the connection.
+        //
+        printf("[conn][%p] Shut down by transport, 0x%x\n", (HQUIC)Connection, Event->SHUTDOWN_INITIATED_BY_TRANSPORT.Status);
+        break;
+    case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER:
+        //
+        // The connection was explicitly shut down by the peer.
+        //
+        printf("[conn][%p] Shut down by peer, 0x%llu\n", (HQUIC)Connection, (unsigned long long)Event->SHUTDOWN_INITIATED_BY_PEER.ErrorCode);
+        break;
+    case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
+        //
+        // The connection has completed the shutdown process and is ready to be
+        // safely cleaned up. Cleanup can now safely occur.
+        // The connection will be closed when all references are released.
+        // This event occuring will both release the callback, releasing any captures,
+        // and release the connection handle on itself.
+        //
+        printf("[conn][%p] All done\n", (HQUIC)Connection);
+        break;
+    case QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED:
+    {
+        //
+        // The peer has started/created a new stream. The app MUST set the
+        // callback handler before returning.
+        //
+        printf("[strm][%p] Peer started\n", Event->PEER_STREAM_STARTED.Stream);
+        auto strm = Connection.GetPeerStream(Event);
+        strm.SetStreamFunc(ServerStreamCallback);
+        break;
+    }
+    case QUIC_CONNECTION_EVENT_RESUMED:
+        //
+        // The connection succeeded in doing a TLS resumption of a previous
+        // connection's session.
+        //
+        printf("[conn][%p] Connection resumed!\n", (HQUIC)Connection);
+        break;
+    default:
+        break;
+    }
+    return QUIC_STATUS_SUCCESS;
 }
 
 int main() {
@@ -178,28 +174,25 @@ int main() {
     {
         ms::quic::Library Library;
         ms::quic::Registration Registration{Library};
-        ms::quic::Configuration Configuration{Registration, {"sample"}};
-        QUIC_STATUS Res = Configuration.LoadCredential(*SelfCert);
-        printf("Status %d\n", Res);
+        ms::quic::Settings Settings;
+        Settings.SetIdleTimeoutMs(IdleTimeoutMs).SetServerResumptionLevel(QUIC_SERVER_RESUME_AND_ZERORTT).SetPeerBidiStreamCount(1);
+
+        ms::quic::Configuration Configuration{ Registration, {Alpn}, Settings, {*SelfCert} };
+        printf("Status %d\n", (QUIC_STATUS)Configuration);
         ms::quic::Listener Listener{Registration};
-        Res = Listener.Start({"sample"}, 4567);
+        QUIC_STATUS Res = Listener.Start({"sample"}, 4567);
         printf("Status %d\n", Res);
 
-        Listener.SetListenerFunc([Configuration](const QUIC_NEW_CONNECTION_INFO&, ms::quic::Connection& Conn) noexcept -> QUIC_STATUS {
-            Conn.SetConnectionFunc([Conn](QUIC_CONNECTION_EVENT* Event) noexcept -> QUIC_STATUS {
-                printf("Received Event Type: %d\n", Event->Type);
-                if (Event->Type == QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE) {
-                    printf("Shutdonw\n");
-                }
-                // Use Conn or Event in here
-                UNREFERENCED_PARAMETER(Conn);
-                return QUIC_STATUS_SUCCESS;
-            });
-            return Conn.SetConfiguration(Configuration);
+        Listener.SetListenerFunc([Configuration](ms::quic::Listener& Listener, QUIC_LISTENER_EVENT* Event) noexcept -> QUIC_STATUS {
+            if (Event->Type == QUIC_LISTENER_EVENT_NEW_CONNECTION) {
+                auto Conn = Listener.GetNewConnection(Event);
+                return Conn.SetConnectionFunc(ServerConnectionCallback).SetConfiguration(Configuration);
+            }
+            return QUIC_STATUS_SUCCESS;
         });
 
         getchar();
-        Listener.Stop();
+        Listener.StopAndCleanup();
     }
 
     QuicPlatFreeSelfSignedCert(SelfCert);

@@ -154,6 +154,7 @@ private:
 };
 
 class Settings : public QUIC_SETTINGS {
+public:
     Settings() noexcept { IsSetFlags = 0; }
     Settings& SetSendBufferingEnabled(bool Value) noexcept { SendBufferingEnabled = Value; IsSet.SendBufferingEnabled = TRUE; return *this; }
     Settings& SetPacingEnabled(bool Value) noexcept { PacingEnabled = Value; IsSet.PacingEnabled = TRUE; return *this; }
@@ -182,12 +183,13 @@ public:
 };
 
 class CredentialConfig : public QUIC_CREDENTIAL_CONFIG {
-    explicit CredentialConfig(const QUIC_CREDENTIAL_CONFIG& Config) noexcept {
+public:
+    CredentialConfig(const QUIC_CREDENTIAL_CONFIG& Config) noexcept {
         QUIC_CREDENTIAL_CONFIG* thisStruct = this;
         memcpy(thisStruct, &Config, sizeof(QUIC_CREDENTIAL_CONFIG));
     }
 
-    explicit CredentialConfig(QUIC_CREDENTIAL_FLAGS _Flags = QUIC_CREDENTIAL_FLAG_CLIENT) noexcept {
+    CredentialConfig(QUIC_CREDENTIAL_FLAGS _Flags = QUIC_CREDENTIAL_FLAG_CLIENT) noexcept {
         QUIC_CREDENTIAL_CONFIG* thisStruct = this;
         memset(thisStruct, 0, sizeof(QUIC_CREDENTIAL_CONFIG));
         Flags = _Flags;
@@ -387,7 +389,7 @@ private:
             InitStatus = Reg;
         }
         HQUIC Connection {nullptr};
-        std::function<QUIC_STATUS(QUIC_CONNECTION_EVENT*)> ConnectionCallback;
+        std::function<QUIC_STATUS(ms::quic::Connection&, QUIC_CONNECTION_EVENT*)> ConnectionCallback;
         Library Library;
         Registration Registration;
     };
@@ -397,16 +399,17 @@ private:
     QUIC_CONNECTION_CALLBACK_HANDLER ConnCallbackFunc() noexcept {
         return [](HQUIC Handle, void* Context, QUIC_CONNECTION_EVENT* Event) noexcept -> QUIC_STATUS {
                                 DataStore* Storage = static_cast<DataStore*>(Context);
-
                                 QUIC_STATUS RetVal = QUIC_STATUS_SUCCESS;
+                                Connection Conn{Storage};
                                 if (Storage->ConnectionCallback) {
-                                    RetVal = Storage->ConnectionCallback(Event);
+                                    RetVal = Storage->ConnectionCallback(Conn, Event);
                                 }
 
                                 if (Event->Type == QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE) {
-                                    Connection Conn{Storage};
                                     Conn.SetConnectionFunc(nullptr);
                                     Conn.Close();
+                                } else {
+                                    Conn.Storage = nullptr;
                                 }
 
                                 UNREFERENCED_PARAMETER(Handle);
@@ -487,7 +490,7 @@ public:
     inline Stream GetPeerStream(QUIC_CONNECTION_EVENT* Event) const noexcept;
 
     // TODO Make this required on server side.
-    Connection& SetConnectionFunc(std::function<QUIC_STATUS(QUIC_CONNECTION_EVENT*)> Func) noexcept {
+    Connection& SetConnectionFunc(std::function<QUIC_STATUS(ms::quic::Connection&, QUIC_CONNECTION_EVENT*)> Func) noexcept {
         Storage->ConnectionCallback = std::move(Func);
         return *this;
     }
@@ -511,31 +514,32 @@ class Stream : public Base<Stream> {
 private:
     struct DataStore : public Base<Stream>::BaseDataStore {
         DataStore(const Connection& Conn) noexcept : Library{Conn}, Registration{Conn}, Connection{Conn} {
-
+            InitStatus = Conn;
         }
         HQUIC Stream {nullptr};
-        std::function<QUIC_STATUS(QUIC_STREAM_EVENT*)> StreamCallback;
+        std::function<QUIC_STATUS(ms::quic::Stream&, QUIC_STREAM_EVENT*)> StreamCallback;
         Library Library;
         Registration Registration;
         Connection Connection;
     };
 
-    Stream(DataStore* Store) noexcept : Base{Store->Library.GetTable()} {
-        this->Storage = Store;
+    explicit Stream(DataStore* Store) noexcept : Base{Store->Library.GetTable()}, Storage{Store} {
     }
 
     QUIC_STREAM_CALLBACK_HANDLER StreamCallbackFunc() noexcept {
         return [](HQUIC Handle, void* Context, QUIC_STREAM_EVENT* Event) noexcept -> QUIC_STATUS {
             DataStore* Storage = static_cast<DataStore*>(Context);
             QUIC_STATUS RetVal = QUIC_STATUS_SUCCESS;
+            Stream Strm{Storage};
             if (Storage->StreamCallback) {
-                RetVal = Storage->StreamCallback(Event);
+                RetVal = Storage->StreamCallback(Strm, Event);
             }
 
             if (Event->Type == QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE) {
-                Stream Strm{Storage};
                 Strm.SetStreamFunc(nullptr);
                 Strm.Close();
+            } else {
+                Strm.Storage = nullptr;
             }
 
             UNREFERENCED_PARAMETER(Handle);
@@ -601,7 +605,7 @@ public:
         return Storage->Stream;
     }
 
-    Stream& SetStreamFunc(std::function<QUIC_STATUS(QUIC_STREAM_EVENT*)> Func) noexcept {
+    Stream& SetStreamFunc(std::function<QUIC_STATUS(ms::quic::Stream&, QUIC_STREAM_EVENT*)> Func) noexcept {
         Storage->StreamCallback = std::move(Func);
         return *this;
     }
@@ -637,13 +641,12 @@ private:
             InitStatus = Reg;
         }
         HQUIC Listener {nullptr};
-        std::function<QUIC_STATUS(const QUIC_NEW_CONNECTION_INFO&, Connection&)> NewConnectionCallback;
+        std::function<QUIC_STATUS(ms::quic::Listener&, QUIC_LISTENER_EVENT*)> ListenerCallback;
         Library Library;
         Registration Registration;
     };
 
-    explicit Listener(const Listener& List, bool) noexcept : Base{List.GetTable()} {
-        Storage = List.Storage;
+    explicit Listener(DataStore* Store) noexcept : Base{Store->Library.GetTable()}, Storage{Store} {
     }
 public:
 
@@ -654,16 +657,22 @@ public:
         Storage->InitStatus = GetTable()->ListenerOpen(Reg,
             [](HQUIC Handle, void* Context, QUIC_LISTENER_EVENT* Event) noexcept -> QUIC_STATUS {
                 DataStore* Storage = static_cast<DataStore*>(Context);
-                switch (Event->Type) {
-                    case QUIC_LISTENER_EVENT_NEW_CONNECTION:
-                        if (Storage->NewConnectionCallback) {
-                            Connection Conn{Event->NEW_CONNECTION.Connection, Storage->Registration};
-                            return Storage->NewConnectionCallback(*Event->NEW_CONNECTION.Info, Conn);
-                        }
-                        return QUIC_STATUS_USER_CANCELED;
+                Listener Listener{Storage};
+                if (Storage->ListenerCallback) {
+                    QUIC_STATUS RetVal = Storage->ListenerCallback(Listener, Event);
+                    Listener.Storage = nullptr;
+                    return RetVal;
                 }
+                // switch (Event->Type) {
+                //     case QUIC_LISTENER_EVENT_NEW_CONNECTION:
+                //         if (Storage->NewConnectionCallback) {
+                //             Connection Conn{Event->NEW_CONNECTION.Connection, Storage->Registration};
+                //             return Storage->NewConnectionCallback(*Event->NEW_CONNECTION.Info, Conn);
+                //         }
+                //         return QUIC_STATUS_USER_CANCELED;
+                // }
                 UNREFERENCED_PARAMETER(Handle);
-                return QUIC_STATUS_SUCCESS;
+                return QUIC_STATUS_USER_CANCELED;
             }
         , Storage, &Storage->Listener);
     }
@@ -706,8 +715,12 @@ public:
         return Storage->Listener;
     }
 
-    Listener& SetListenerFunc(std::function<QUIC_STATUS(const QUIC_NEW_CONNECTION_INFO&, Connection&)> Func) noexcept {
-        Storage->NewConnectionCallback = std::move(Func);
+    Connection GetNewConnection(QUIC_LISTENER_EVENT* Event) const noexcept {
+        return Connection{Event->NEW_CONNECTION.Connection, Storage->Registration};
+    }
+
+    Listener& SetListenerFunc(std::function<QUIC_STATUS(ms::quic::Listener&, QUIC_LISTENER_EVENT*)> Func) noexcept {
+        Storage->ListenerCallback = std::move(Func);
         return *this;
     }
 
@@ -721,6 +734,11 @@ public:
 
     void Stop() const noexcept {
         GetTable()->ListenerStop(*this);
+    }
+
+    void StopAndCleanup() noexcept {
+        Stop();
+        SetListenerFunc(nullptr);
     }
 
 private:
