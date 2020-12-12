@@ -380,7 +380,7 @@ private:
     friend class Base<Configuration>;
 };
 
-class Connection : Base<Connection> {
+class Connection : public Base<Connection> {
 private:
     struct DataStore : public Base<Connection>::BaseDataStore {
         DataStore(const Registration& Reg) noexcept : Library{Reg}, Registration{Reg} {
@@ -391,12 +391,6 @@ private:
         Library Library;
         Registration Registration;
     };
-    Connection(HQUIC Handle, const Registration& Reg) noexcept : Base{Reg} {
-        Storage = new(std::nothrow) DataStore{Reg};
-        if (!*this) return;
-        Storage->Connection = Handle;
-        Storage->InitStatus = QUIC_STATUS_SUCCESS;
-    }
     Connection(DataStore* Store) noexcept : Base{Store->Library.GetTable()} {
         this->Storage = Store;
     }
@@ -418,6 +412,14 @@ private:
                                 UNREFERENCED_PARAMETER(Handle);
                                 return RetVal;
                             };
+    }
+    Connection(HQUIC Handle, const Registration& Reg) noexcept : Base{Reg} {
+        Storage = new(std::nothrow) DataStore{Reg};
+        if (!*this) return;
+        Storage->Connection = Handle;
+        AddRef();
+        GetTable()->SetCallbackHandler(Handle, (void*)ConnCallbackFunc(), Storage);
+        Storage->InitStatus = QUIC_STATUS_SUCCESS;
     }
     friend class Listener;
 public:
@@ -478,6 +480,12 @@ public:
         return GetTable()->ConnectionSetConfiguration(*this, Config);
     }
 
+    QUIC_STATUS SendResumptionTicket(QUIC_SEND_RESUMPTION_FLAGS Flags, const uint8_t* ResumptionData, uint16_t DataLength) const noexcept {
+        return GetTable()->ConnectionSendResumptionTicket(*this, Flags, DataLength, ResumptionData);
+    }
+
+    inline Stream GetPeerStream(QUIC_CONNECTION_EVENT* Event) const noexcept;
+
     // TODO Make this required on server side.
     Connection& SetConnectionFunc(std::function<QUIC_STATUS(QUIC_CONNECTION_EVENT*)> Func) noexcept {
         Storage->ConnectionCallback = std::move(Func);
@@ -497,6 +505,129 @@ private:
     }
     DataStore* Storage {nullptr};
     friend class Base<Connection>;
+};
+
+class Stream : public Base<Stream> {
+private:
+    struct DataStore : public Base<Stream>::BaseDataStore {
+        DataStore(const Connection& Conn) noexcept : Library{Conn}, Registration{Conn}, Connection{Conn} {
+
+        }
+        HQUIC Stream {nullptr};
+        std::function<QUIC_STATUS(QUIC_STREAM_EVENT*)> StreamCallback;
+        Library Library;
+        Registration Registration;
+        Connection Connection;
+    };
+
+    Stream(DataStore* Store) noexcept : Base{Store->Library.GetTable()} {
+        this->Storage = Store;
+    }
+
+    QUIC_STREAM_CALLBACK_HANDLER StreamCallbackFunc() noexcept {
+        return [](HQUIC Handle, void* Context, QUIC_STREAM_EVENT* Event) noexcept -> QUIC_STATUS {
+            DataStore* Storage = static_cast<DataStore*>(Context);
+            QUIC_STATUS RetVal = QUIC_STATUS_SUCCESS;
+            if (Storage->StreamCallback) {
+                RetVal = Storage->StreamCallback(Event);
+            }
+
+            if (Event->Type == QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE) {
+                Stream Strm{Storage};
+                Strm.SetStreamFunc(nullptr);
+                Strm.Close();
+            }
+
+            UNREFERENCED_PARAMETER(Handle);
+            return RetVal;
+        };
+    }
+
+    Stream(HQUIC Handle, const Connection& Conn) noexcept: Base{Conn} {
+        Storage = new(std::nothrow)DataStore{Conn};
+        if (!*this) return;
+        Storage->Stream = Handle;
+        AddRef();
+        Storage->InitStatus = QUIC_STATUS_SUCCESS;
+        GetTable()->SetCallbackHandler(Handle, (void*)StreamCallbackFunc(), Storage);
+    }
+public:
+    explicit Stream(const Connection& Conn, QUIC_STREAM_OPEN_FLAGS Flags = QUIC_STREAM_OPEN_FLAG_NONE) noexcept : Base{Conn} {
+        Storage = new(std::nothrow)DataStore{Conn};
+        if (!*this) return;
+        // Add ref to keep alive in callback
+        AddRef();
+        Storage->InitStatus = GetTable()->StreamOpen(Conn, Flags, StreamCallbackFunc(), Storage, &Storage->Stream);
+        if (FAILED(Storage->InitStatus)) {
+            Release();
+        }
+    }
+
+    ~Stream() noexcept {
+        Close();
+    }
+
+    Stream(const Stream& Other) noexcept : Base{Other} {
+        Storage = Other.Storage;
+        AddRef();
+    }
+
+    Stream& operator=(const Stream& Other) noexcept {
+        Close();
+        Base::operator=(Other);
+
+        Storage = Other.Storage;
+        AddRef();
+    }
+
+    Stream(Stream&& Other) noexcept : Base{Other} {
+        Storage = Other.Storage;
+        Other.Storage = nullptr;
+    }
+
+    Stream& operator=(Stream&& Other) noexcept {
+        Close();
+        Base::operator=(Other);
+
+        Storage = Other.Storage;
+        Other.Storage = nullptr;
+    }
+
+    operator const Library&() const noexcept {
+        return Storage->Library;
+    }
+
+    operator HQUIC() const noexcept {
+        return Storage->Stream;
+    }
+
+    Stream& SetStreamFunc(std::function<QUIC_STATUS(QUIC_STREAM_EVENT*)> Func) noexcept {
+        Storage->StreamCallback = std::move(Func);
+        return *this;
+    }
+
+    QUIC_STATUS Shutdown(QUIC_STREAM_SHUTDOWN_FLAGS Flags, QUIC_UINT62 ErrorCode) const noexcept {
+        return GetTable()->StreamShutdown(*this, Flags, ErrorCode);
+    }
+
+    QUIC_STATUS Send(const QUIC_BUFFER* const Buffers, uint32_t BufferCount, QUIC_SEND_FLAGS Flags, void* ClientSendContext) const noexcept {
+        return GetTable()->StreamSend(*this, Buffers, BufferCount, Flags, ClientSendContext);
+    }
+
+private:
+    void Close() {
+        if (Release()) {
+            if (Storage->Stream) {
+                GetTable()->StreamClose(Storage->Stream);
+            }
+            CallDeleter();
+            delete Storage;
+            Storage = nullptr;
+        }
+    }
+    DataStore* Storage{nullptr};
+    friend class Base<Stream>;
+    friend class Connection;
 };
 
 class Listener : public Base<Listener> {
@@ -527,9 +658,6 @@ public:
                     case QUIC_LISTENER_EVENT_NEW_CONNECTION:
                         if (Storage->NewConnectionCallback) {
                             Connection Conn{Event->NEW_CONNECTION.Connection, Storage->Registration};
-                            Conn.AddRef();
-                            // TODO Error check the following call
-                            Storage->Library.GetTable()->SetCallbackHandler(Event->NEW_CONNECTION.Connection, (void*)Conn.ConnCallbackFunc(), Conn.Storage);
                             return Storage->NewConnectionCallback(*Event->NEW_CONNECTION.Info, Conn);
                         }
                         return QUIC_STATUS_USER_CANCELED;
@@ -610,6 +738,10 @@ private:
     DataStore* Storage {nullptr};
     friend class Base<Listener>;
 };
+
+inline Stream Connection::GetPeerStream(QUIC_CONNECTION_EVENT* Event) const noexcept {
+    return Stream{Event->PEER_STREAM_STARTED.Stream, *this};
+}
 
 inline Registration Library::CreateRegistration() const noexcept {
     return Registration{*this};
