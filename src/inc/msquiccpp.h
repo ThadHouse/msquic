@@ -411,6 +411,7 @@ private:
 
                                 if (Event->Type == QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE) {
                                     Connection Conn{Storage};
+                                    Conn.SetConnectionFunc(nullptr);
                                     Conn.Close();
                                 }
 

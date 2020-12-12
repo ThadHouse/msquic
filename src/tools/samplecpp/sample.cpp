@@ -23,6 +23,9 @@ int main() {
         Listener.SetListenerFunc([Configuration](const QUIC_NEW_CONNECTION_INFO&, ms::quic::Connection& Conn) noexcept -> QUIC_STATUS {
             Conn.SetConnectionFunc([Conn](QUIC_CONNECTION_EVENT* Event) noexcept -> QUIC_STATUS {
                 printf("Received Event Type: %d\n", Event->Type);
+                if (Event->Type == QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE) {
+                    printf("Shutdonw\n");
+                }
                 // Use Conn or Event in here
                 UNREFERENCED_PARAMETER(Conn);
                 return QUIC_STATUS_SUCCESS;
