@@ -21,7 +21,7 @@ private:
 protected:
     struct BaseDataStore {
         std::atomic_int RefCount{1};
-        QUIC_STATUS InitStatus;
+        QUIC_STATUS InitStatus{ QUIC_STATUS_SUCCESS };
         std::function<void()> DeletedFunc;
     };
     const QUIC_API_TABLE* ApiTable {nullptr};
@@ -94,7 +94,7 @@ private:
     };
 public:
     Library() noexcept : Base{nullptr} {
-        Storage = new(std::nothrow) DataStore{};
+        Storage = new(std::nothrow) DataStore;
         if (Storage == nullptr) return;
         Storage->InitStatus = MsQuicOpen(&ApiTable);
     }
@@ -252,6 +252,11 @@ public:
         return Storage->Registration;
     }
 
+    Registration& CloseAllConnectionsOnDelete() noexcept {
+        CloseAllConns = true;
+        return *this;
+    }
+
     inline Configuration CreateConfiguration(const Alpn& Alpn) const noexcept;
     inline Configuration CreateConfiguration(const Alpn& Alpn, const CredentialConfig& CredConfig) const noexcept;
     inline Configuration CreateConfiguration(const Alpn& Alpn, const Settings& Settings) const noexcept;
@@ -260,6 +265,9 @@ public:
 
 private:
     void Close() {
+        if (CloseAllConns && this->Storage->Registration) {
+            GetApiTable()->RegistrationShutdown(*this, QUIC_CONNECTION_SHUTDOWN_FLAG_SILENT, 1);
+        }
         if (Release()) {
             if (Storage->Registration) {
                 GetApiTable()->RegistrationClose(Storage->Registration);
@@ -271,6 +279,7 @@ private:
     }
 
     DataStore* Storage {nullptr};
+    bool CloseAllConns{false};
     friend class Base<Registration>;
 };
 
@@ -630,7 +639,7 @@ public:
         if (!*this) return;
 
         Storage->InitStatus = GetApiTable()->ListenerOpen(Reg,
-            [](HQUIC Handle, void* Context, QUIC_LISTENER_EVENT* Event) noexcept -> QUIC_STATUS {
+            [](HQUIC Handle, void* Context, QUIC_LISTENER_EVENT* Event) -> QUIC_STATUS {
                 DataStore* Storage = static_cast<DataStore*>(Context);
                 Listener Listener{Storage};
                 if (Storage->ListenerCallback) {
@@ -707,13 +716,17 @@ public:
         GetApiTable()->ListenerStop(*this);
     }
 
-    void StopAndCleanup() noexcept {
-        Stop();
-        SetListenerFunc(nullptr);
+    Listener& StopOnCleanup() noexcept {
+        StopCleanup = true;
+        return *this;
     }
 
 private:
-    void Close() {
+    void Close() noexcept {
+        if (StopCleanup && Storage->Listener) {
+            GetApiTable()->ListenerStop(Storage->Listener);
+            SetListenerFunc(nullptr);
+        }
         if (Release()) {
             if (Storage->Listener) {
                 GetApiTable()->ListenerClose(Storage->Listener);
@@ -725,6 +738,7 @@ private:
     }
 
     DataStore* Storage {nullptr};
+    bool StopCleanup{false};
     friend class Base<Listener>;
 };
 

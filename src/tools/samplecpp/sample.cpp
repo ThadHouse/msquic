@@ -180,7 +180,7 @@ int main() {
         ms::quic::Configuration Configuration{ Registration, {Alpn}, Settings, {*SelfCert} };
         printf("Status %d\n", (QUIC_STATUS)Configuration);
         ms::quic::Listener Listener{Registration};
-        QUIC_STATUS Res = Listener.Start({"sample"}, 4567);
+        QUIC_STATUS Res = Listener.StopOnCleanup().Start({"sample"}, 4567);
         printf("Status %d\n", Res);
 
         Listener.SetListenerFunc([Configuration](ms::quic::Listener& Listener, QUIC_LISTENER_EVENT* Event) noexcept -> QUIC_STATUS {
@@ -192,7 +192,6 @@ int main() {
         });
 
         getchar();
-        Listener.StopAndCleanup();
     }
 
     QuicPlatFreeSelfSignedCert(SelfCert);
