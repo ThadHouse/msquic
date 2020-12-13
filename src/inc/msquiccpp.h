@@ -2,7 +2,9 @@
 
 #include "msquic.h"
 
-#include <atomic>
+#include "msquiccpp_kernel.h"
+
+//#include <atomic>
 #include <string>
 #include <functional>
 
