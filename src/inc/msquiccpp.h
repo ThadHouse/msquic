@@ -647,14 +647,6 @@ public:
                     Listener.Storage = nullptr;
                     return RetVal;
                 }
-                // switch (Event->Type) {
-                //     case QUIC_LISTENER_EVENT_NEW_CONNECTION:
-                //         if (Storage->NewConnectionCallback) {
-                //             Connection Conn{Event->NEW_CONNECTION.Connection, Storage->Registration};
-                //             return Storage->NewConnectionCallback(*Event->NEW_CONNECTION.Info, Conn);
-                //         }
-                //         return QUIC_STATUS_USER_CANCELED;
-                // }
                 UNREFERENCED_PARAMETER(Handle);
                 return QUIC_STATUS_USER_CANCELED;
             }
