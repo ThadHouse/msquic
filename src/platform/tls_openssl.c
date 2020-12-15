@@ -572,7 +572,7 @@ QuicTlsSecConfigCreate(
     // Create the a SSL context for the security config.
     //
 
-    SecurityConfig->SSLCtx = SSL_CTX_new(TLS_method());
+    SecurityConfig->SSLCtx = SSL_CTX_new_ex(OSSL_LIB_CTX_new(), NULL, TLS_method());
     if (SecurityConfig->SSLCtx == NULL) {
         QuicTraceEvent(
             LibraryErrorStatus,
