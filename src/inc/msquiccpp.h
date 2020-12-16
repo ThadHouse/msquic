@@ -2,11 +2,22 @@
 
 #include "msquic.h"
 
-#include "msquiccpp_kernel.h"
+#define CUSTOM_FUNCTIONS
 
-//#include <atomic>
-#include <string>
+#ifdef CUSTOM_FUNCTIONS
+#include "msquiccpp_kernel.h"
+#else
+#include <atomic>
 #include <functional>
+#include <type_traits>
+#endif
+
+#include <string>
+//#include <atomic>
+//#include <string>
+//#include <functional>
+
+
 
 namespace ms::quic {
 class Registration;
@@ -17,14 +28,40 @@ class Listener;
 class Configuration;
 class Connection;
 
+#ifdef CUSTOM_FUNCTIONS
+using quic_atomic_int = stdkm::atomic_int;
+using quic_string = std::string;
+
+template<class T>
+constexpr stdkm::remove_reference_t<T>&& quic_move(T&& t) noexcept {
+    return static_cast<typename stdkm::remove_reference<T>::type&&>(t);
+}
+
+template<typename T>
+using quic_function = stdkm::function<T>;
+#else
+using quic_atomic_int = std::atomic_int;
+using quic_string = std::string;
+
+template<class T>
+constexpr std::remove_reference_t<T>&& quic_move(T&& t) noexcept {
+    return static_cast<typename std::remove_reference<T>::type&&>(t);
+}
+
+template<typename T>
+using quic_function = std::function<T>;
+#endif
+
+
+
 template <class T>
 class Base {
 private:
 protected:
     struct BaseDataStore {
-        std::atomic_int RefCount{1};
+        quic_atomic_int RefCount{1};
         QUIC_STATUS InitStatus{ QUIC_STATUS_SUCCESS };
-        std::function<void()> DeletedFunc;
+        quic_function<void()> DeletedFunc;
     };
     const QUIC_API_TABLE* ApiTable {nullptr};
 
@@ -61,13 +98,13 @@ public:
         return ApiTable;
     }
 
-    T& OnDeleted(std::function<void()> Deleter) noexcept {
-        static_cast<T*>(this)->Storage->DeletedFunc = std::move(Deleter);
+    T& OnDeleted(quic_function<void()> Deleter) noexcept {
+        static_cast<T*>(this)->Storage->DeletedFunc = quic_move(Deleter);
         return *static_cast<T*>(this);
     }
 
-    const T& OnDeleted(std::function<void()> Deleter) const noexcept {
-        static_cast<const T*>(this)->Storage->DeletedFunc = std::move(Deleter);
+    const T& OnDeleted(quic_function<void()> Deleter) const noexcept {
+        static_cast<const T*>(this)->Storage->DeletedFunc = quic_move(Deleter);
         return *static_cast<const T*>(this);
     }
 protected:
@@ -82,7 +119,7 @@ protected:
         return false;
     }
     void CallDeleter() noexcept {
-        auto Deleter = std::move(static_cast<T*>(this)->Storage->DeletedFunc);
+        auto Deleter = quic_move(static_cast<T*>(this)->Storage->DeletedFunc);
         if (Deleter) {
             Deleter();
         }
@@ -170,10 +207,10 @@ public:
 
 class Alpn {
     QUIC_BUFFER Buffer;
-    std::string RawAlpn;
+    quic_string RawAlpn;
 public:
-    Alpn(std::string Alpn) noexcept {
-        RawAlpn = std::move(Alpn);
+    Alpn(quic_string Alpn) noexcept {
+        RawAlpn = quic_move(Alpn);
         Buffer.Buffer = (uint8_t*)RawAlpn.c_str();
         Buffer.Length = (uint32_t)RawAlpn.length();
     }
@@ -210,7 +247,7 @@ public:
         Storage->InitStatus = GetApiTable()->RegistrationOpen(nullptr, &Storage->Registration);
     }
 
-    Registration(const Library& Lib, const std::string& AppName, QUIC_EXECUTION_PROFILE Profile = QUIC_EXECUTION_PROFILE_LOW_LATENCY) noexcept : Base{Lib.GetApiTable()} {
+    Registration(const Library& Lib, const quic_string& AppName, QUIC_EXECUTION_PROFILE Profile = QUIC_EXECUTION_PROFILE_LOW_LATENCY) noexcept : Base{Lib.GetApiTable()} {
         Storage = new(std::nothrow) DataStore{Lib};
         if (!*this) return;
         const QUIC_REGISTRATION_CONFIG RegConfig = { AppName.c_str(), Profile};
@@ -387,7 +424,7 @@ private:
             InitStatus = Reg;
         }
         HQUIC Connection {nullptr};
-        std::function<QUIC_STATUS(ms::quic::Connection&, QUIC_CONNECTION_EVENT*)> ConnectionCallback;
+        quic_function<QUIC_STATUS(ms::quic::Connection&, QUIC_CONNECTION_EVENT*)> ConnectionCallback;
         Registration Registration;
     };
     Connection(DataStore* Store) noexcept : Base{Store->Registration.GetApiTable()} {
@@ -468,7 +505,7 @@ public:
         return Storage->Connection;
     }
 
-    QUIC_STATUS Start(const Configuration& Config, QUIC_ADDRESS_FAMILY Af, std::string ServerName, uint16_t ServerPort) noexcept {
+    QUIC_STATUS Start(const Configuration& Config, QUIC_ADDRESS_FAMILY Af, const quic_string& ServerName, uint16_t ServerPort) noexcept {
         return GetApiTable()->ConnectionStart(*this, Config, Af, ServerName.c_str(), ServerPort);
     }
 
@@ -483,8 +520,8 @@ public:
     inline Stream GetPeerStream(QUIC_CONNECTION_EVENT* Event) const noexcept;
 
     // TODO Make this required on server side.
-    Connection& SetConnectionFunc(std::function<QUIC_STATUS(ms::quic::Connection&, QUIC_CONNECTION_EVENT*)> Func) noexcept {
-        Storage->ConnectionCallback = std::move(Func);
+    Connection& SetConnectionFunc(quic_function<QUIC_STATUS(ms::quic::Connection&, QUIC_CONNECTION_EVENT*)> Func) noexcept {
+        Storage->ConnectionCallback = quic_move(Func);
         return *this;
     }
 
@@ -510,7 +547,7 @@ private:
             InitStatus = Conn;
         }
         HQUIC Stream {nullptr};
-        std::function<QUIC_STATUS(ms::quic::Stream&, QUIC_STREAM_EVENT*)> StreamCallback;
+        quic_function<QUIC_STATUS(ms::quic::Stream&, QUIC_STREAM_EVENT*)> StreamCallback;
         Connection Connection;
     };
 
@@ -592,8 +629,8 @@ public:
         return Storage->Stream;
     }
 
-    Stream& SetStreamFunc(std::function<QUIC_STATUS(ms::quic::Stream&, QUIC_STREAM_EVENT*)> Func) noexcept {
-        Storage->StreamCallback = std::move(Func);
+    Stream& SetStreamFunc(quic_function<QUIC_STATUS(ms::quic::Stream&, QUIC_STREAM_EVENT*)> Func) noexcept {
+        Storage->StreamCallback = quic_move(Func);
         return *this;
     }
 
@@ -628,7 +665,7 @@ private:
             InitStatus = Reg;
         }
         HQUIC Listener {nullptr};
-        std::function<QUIC_STATUS(ms::quic::Listener&, QUIC_LISTENER_EVENT*)> ListenerCallback;
+        quic_function<QUIC_STATUS(ms::quic::Listener&, QUIC_LISTENER_EVENT*)> ListenerCallback;
         Registration Registration;
     };
 
@@ -693,8 +730,8 @@ public:
         return Connection{Event->NEW_CONNECTION.Connection, Storage->Registration};
     }
 
-    Listener& SetListenerFunc(std::function<QUIC_STATUS(ms::quic::Listener&, QUIC_LISTENER_EVENT*)> Func) noexcept {
-        Storage->ListenerCallback = std::move(Func);
+    Listener& SetListenerFunc(quic_function<QUIC_STATUS(ms::quic::Listener&, QUIC_LISTENER_EVENT*)> Func) noexcept {
+        Storage->ListenerCallback = quic_move(Func);
         return *this;
     }
 

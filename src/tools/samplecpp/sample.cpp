@@ -2,6 +2,8 @@
 #define QUIC_TEST_APIS 1
 #include <quic_platform.h>
 
+#include <memory>
+
 extern "C" _IRQL_requires_max_(PASSIVE_LEVEL) void QuicTraceRundown(void) { }
 
 //
@@ -171,6 +173,8 @@ int main() {
 
     auto SelfCert = QuicPlatGetSelfSignedCert(QUIC_SELF_SIGN_CERT_USER);
 
+    std::unique_ptr<int> i = std::make_unique<int>(42);
+
     {
         ms::quic::Library Library;
         ms::quic::Registration Registration{Library};
@@ -183,7 +187,8 @@ int main() {
         QUIC_STATUS Res = Listener.StopOnCleanup().Start({"sample"}, 4567);
         printf("Status %d\n", Res);
 
-        Listener.SetListenerFunc([Configuration](ms::quic::Listener& Listener, QUIC_LISTENER_EVENT* Event) noexcept -> QUIC_STATUS {
+        Listener.SetListenerFunc([Configuration, iptr = std::move(i)](ms::quic::Listener& Listener, QUIC_LISTENER_EVENT* Event) noexcept -> QUIC_STATUS {
+            printf("%d\n", *iptr);
             if (Event->Type == QUIC_LISTENER_EVENT_NEW_CONNECTION) {
                 auto Conn = Listener.GetNewConnection(Event);
                 return Conn.SetConnectionFunc(ServerConnectionCallback).SetConfiguration(Configuration);
