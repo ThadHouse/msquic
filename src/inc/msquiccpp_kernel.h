@@ -65,13 +65,21 @@ public:
     function& operator=(const function&) = delete;
 
     function(function&& other) noexcept {
-        ResetMove(stdkm::move(other));
+        if (other.Empty()) {
+            Set(nullptr);
+        } else {
+            ResetMove(stdkm::move(other));
+        }
     };
 
     function& operator=(function&& other) noexcept {
         if (this != &other) {
             Tidy();
-            ResetMove(stdkm::move(other));
+            if (other.Empty()) {
+                Set(nullptr);
+            } else {
+                ResetMove(stdkm::move(other));
+            }
         }
         return *this;
     }
