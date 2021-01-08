@@ -385,7 +385,7 @@ private:
             ApiTable = Table;
         }
         HQUIC Connection {nullptr};
-        std::function<QUIC_STATUS(ms::quic::Connection&, QUIC_CONNECTION_EVENT*)> ConnectionCallback;
+        quic_function<QUIC_STATUS(ms::quic::Connection&, QUIC_CONNECTION_EVENT*)> ConnectionCallback;
         const QUIC_API_TABLE* ApiTable;
     };
     Connection(DataStore* Store) noexcept : Base{Store->ApiTable} {
@@ -627,7 +627,7 @@ private:
             ApiTable = Reg.GetApiTable();
         }
         HQUIC Listener {nullptr};
-        std::function<QUIC_STATUS(ms::quic::Listener&, QUIC_LISTENER_EVENT*)> ListenerCallback;
+        quic_function<QUIC_STATUS(ms::quic::Listener&, QUIC_LISTENER_EVENT*)> ListenerCallback;
         const QUIC_API_TABLE* ApiTable;
     };
 
