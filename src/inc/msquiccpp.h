@@ -53,9 +53,36 @@ using quic_function = std::function<T>;
 #endif
 
 
+class ApiTableBase {
+public:
+    constexpr const QUIC_API_TABLE* GetApiTable() const noexcept {
+        return ApiTable;
+    }
+protected:
+    const QUIC_API_TABLE* ApiTable {nullptr};
+
+    explicit ApiTableBase(const QUIC_API_TABLE* Table) noexcept : ApiTable{Table} {
+    }
+
+    ApiTableBase(const ApiTableBase& Other) noexcept {
+        ApiTable = Other.ApiTable;
+    }
+
+    ApiTableBase(ApiTableBase&& Other) noexcept {
+        ApiTable = Other.ApiTable;
+    }
+
+    ApiTableBase& operator=(const ApiTableBase& Other) noexcept {
+        ApiTable = Other.ApiTable;
+    }
+
+    ApiTableBase& operator=(ApiTableBase&& Other) noexcept {
+        ApiTable = Other.ApiTable;
+    }
+};
 
 template <class T>
-class Base {
+class Base : public ApiTableBase {
 private:
 protected:
     struct BaseDataStore {
@@ -63,17 +90,14 @@ protected:
         QUIC_STATUS InitStatus{ QUIC_STATUS_SUCCESS };
         quic_function<void()> DeletedFunc;
     };
-    const QUIC_API_TABLE* ApiTable {nullptr};
 
-    explicit Base(const QUIC_API_TABLE* Table) noexcept : ApiTable{Table} {
+    explicit Base(const QUIC_API_TABLE* Table) noexcept : ApiTableBase{Table} {
     }
 
-    Base(const Base& Other) noexcept {
-        ApiTable = Other.ApiTable;
+    Base(const Base& Other) noexcept : ApiTableBase{Other} {
     }
 
-    Base(Base&& Other) noexcept {
-        ApiTable = Other.ApiTable;
+    Base(Base&& Other) noexcept : ApiTableBase{Other} {
     }
 
     Base& operator=(const Base& Other) noexcept {
@@ -92,10 +116,6 @@ public:
 
     constexpr operator bool() const noexcept {
         return QUIC_SUCCEEDED((QUIC_STATUS)*static_cast<const T*>(this));
-    }
-
-    constexpr const QUIC_API_TABLE* GetApiTable() const noexcept {
-        return ApiTable;
     }
 
     T& OnDeleted(quic_function<void()> Deleter) noexcept {
@@ -126,66 +146,35 @@ protected:
     }
 };
 
-class Library : public Base<Library> {
-private:
-    struct DataStore : public Base<Library>::BaseDataStore {
-
-    };
+class Library : public ApiTableBase {
 public:
-    Library() noexcept : Base{nullptr} {
-        Storage = new(std::nothrow) DataStore;
-        if (Storage == nullptr) return;
-        Storage->InitStatus = MsQuicOpen(&ApiTable);
+    Library() noexcept : ApiTableBase{nullptr} {
+        InitStatus = MsQuicOpen(&ApiTable);
     }
     ~Library() noexcept {
-        Close();
-    }
-
-    Library(const Library& Other) noexcept : Base{Other} {
-        Storage = Other.Storage;
-        AddRef();
-    }
-
-    Library& operator=(const Library& Other) noexcept {
-        Close();
-        Base::operator=(Other);
-
-        Storage = Other.Storage;
-        AddRef();
-    }
-
-    Library(Library&& Other) noexcept : Base{Other} {
-        Storage = Other.Storage;
-        Other.Storage = nullptr;
-    }
-
-    Library& operator=(Library&& Other) noexcept {
-        Close();
-        Base::operator=(Other);
-
-        Storage = Other.Storage;
-        Other.Storage = nullptr;
-    }
-
-
-
-    inline Registration CreateRegistration() const noexcept;
-
-    // }
-private:
-    void Close() noexcept {
-        if (Release()) {
-            if (ApiTable) {
-                MsQuicClose(ApiTable);
-            }
-            CallDeleter();
-            delete Storage;
-            Storage = nullptr;
+        if (ApiTable) {
+            MsQuicClose(ApiTable);
         }
     }
 
-    DataStore* Storage {nullptr};
-    friend class Base<Library>;
+    Library(const Library&) = delete;
+    Library(Library&& Other) = delete;
+    Library& operator=(const Library&) = delete;
+    Library& operator=(Library&&) = delete;
+
+    constexpr operator QUIC_STATUS() const noexcept {
+        return InitStatus;
+    }
+
+    constexpr operator bool() const noexcept {
+        return QUIC_SUCCEEDED(this->operator QUIC_STATUS());
+    }
+
+    inline Registration CreateRegistration() const noexcept;
+private:
+
+    const QUIC_API_TABLE* ApiTable {nullptr};
+    QUIC_STATUS InitStatus{QUIC_STATUS_SUCCESS};
 };
 
 class Settings : public QUIC_SETTINGS {
@@ -231,64 +220,45 @@ public:
     }
 };
 
-class Registration : public Base<Registration> {
-private:
-    struct DataStore: public Base<Registration>::BaseDataStore {
-        DataStore(const Library& Lib) noexcept : Library{Lib} {
-            InitStatus = Library;
-        }
-        HQUIC Registration {nullptr};
-        Library Library;
-    };
+class Registration : public ApiTableBase {
 public:
-    explicit Registration(const Library& Lib) noexcept : Base{Lib.GetApiTable()} {
-        Storage = new(std::nothrow) DataStore{Lib};
-        if (!*this) return;
-        Storage->InitStatus = GetApiTable()->RegistrationOpen(nullptr, &Storage->Registration);
+    explicit Registration(const Library& Lib) noexcept : ApiTableBase{Lib.GetApiTable()} {
+        InitStatus = GetApiTable()->RegistrationOpen(nullptr, &HRegistration);
     }
 
-    Registration(const Library& Lib, const quic_string& AppName, QUIC_EXECUTION_PROFILE Profile = QUIC_EXECUTION_PROFILE_LOW_LATENCY) noexcept : Base{Lib.GetApiTable()} {
-        Storage = new(std::nothrow) DataStore{Lib};
-        if (!*this) return;
+    Registration(const Library& Lib, const std::string& AppName, QUIC_EXECUTION_PROFILE Profile = QUIC_EXECUTION_PROFILE_LOW_LATENCY) noexcept : ApiTableBase{Lib.GetApiTable()} {
         const QUIC_REGISTRATION_CONFIG RegConfig = { AppName.c_str(), Profile};
-        Storage->InitStatus = GetApiTable()->RegistrationOpen(&RegConfig, &Storage->Registration);
+        InitStatus = GetApiTable()->RegistrationOpen(&RegConfig, &HRegistration);
     }
+
     ~Registration() noexcept {
-        Close();
+        if (CloseAllConns && this->HRegistration) {
+            Shutdown(QUIC_CONNECTION_SHUTDOWN_FLAG_SILENT, 1);
+        }
+        if (HRegistration) {
+            GetApiTable()->RegistrationClose(HRegistration);
+        }
     }
 
-    Registration(const Registration& Other) noexcept : Base{Other} {
-        Storage = Other.Storage;
-        AddRef();
+    Registration(const Registration&) = delete;
+    Registration(Registration&& Other) = delete;
+    Registration& operator=(const Registration&) = delete;
+    Registration& operator=(Registration&&) = delete;
+
+    constexpr operator QUIC_STATUS() const noexcept {
+        return InitStatus;
     }
 
-    Registration& operator=(const Registration& Other) noexcept {
-        Close();
-        Base::operator=(Other);
-
-        Storage = Other.Storage;
-        AddRef();
-    }
-
-    Registration(Registration&& Other) noexcept : Base{Other} {
-        Storage = Other.Storage;
-        Other.Storage = nullptr;
-    }
-
-    Registration& operator=(Registration&& Other) noexcept {
-        Close();
-        Base::operator=(Other);
-
-        Storage = Other.Storage;
-        Other.Storage = nullptr;
+    constexpr operator bool() const noexcept {
+        return QUIC_SUCCEEDED(this->operator QUIC_STATUS());
     }
 
     void Shutdown(QUIC_CONNECTION_SHUTDOWN_FLAGS Flags, QUIC_UINT62 ErrorCode) noexcept {
-        GetApiTable()->RegistrationShutdown(Storage->Registration, Flags, ErrorCode);
+        GetApiTable()->RegistrationShutdown(HRegistration, Flags, ErrorCode);
     }
 
     operator HQUIC() const noexcept {
-        return Storage->Registration;
+        return HRegistration;
     }
 
     Registration& CloseAllConnectionsOnDelete() noexcept {
@@ -303,33 +273,19 @@ public:
     inline Listener CreateListener() const noexcept;
 
 private:
-    void Close() {
-        if (CloseAllConns && this->Storage->Registration) {
-            GetApiTable()->RegistrationShutdown(*this, QUIC_CONNECTION_SHUTDOWN_FLAG_SILENT, 1);
-        }
-        if (Release()) {
-            if (Storage->Registration) {
-                GetApiTable()->RegistrationClose(Storage->Registration);
-            }
-            CallDeleter();
-            delete Storage;
-            Storage = nullptr;
-        }
-    }
-
-    DataStore* Storage {nullptr};
+    QUIC_STATUS InitStatus;
+    HQUIC HRegistration{nullptr};
+    const QUIC_API_TABLE* ApiTable{nullptr};
     bool CloseAllConns{false};
-    friend class Base<Registration>;
 };
 
 class Configuration : public Base<Configuration> {
 private:
     struct DataStore : public Base<Configuration>::BaseDataStore {
-        DataStore(const Registration& Reg) noexcept : Registration{Reg} {
+        DataStore(const Registration& Reg) noexcept {
             InitStatus = Reg;
         }
         HQUIC Configuration {nullptr};
-        Registration Registration;
     };
 public:
 
@@ -420,14 +376,19 @@ private:
 class Connection : public Base<Connection> {
 private:
     struct DataStore : public Base<Connection>::BaseDataStore {
-        DataStore(const Registration& Reg) noexcept : Registration{Reg} {
+        DataStore(const Registration& Reg) noexcept {
             InitStatus = Reg;
+            ApiTable = Reg.GetApiTable();
+        }
+        DataStore(const QUIC_API_TABLE* Table) noexcept {
+            InitStatus = QUIC_STATUS_SUCCESS;
+            ApiTable = Table;
         }
         HQUIC Connection {nullptr};
-        quic_function<QUIC_STATUS(ms::quic::Connection&, QUIC_CONNECTION_EVENT*)> ConnectionCallback;
-        Registration Registration;
+        std::function<QUIC_STATUS(ms::quic::Connection&, QUIC_CONNECTION_EVENT*)> ConnectionCallback;
+        const QUIC_API_TABLE* ApiTable;
     };
-    Connection(DataStore* Store) noexcept : Base{Store->Registration.GetApiTable()} {
+    Connection(DataStore* Store) noexcept : Base{Store->ApiTable} {
         this->Storage = Store;
     }
     QUIC_CONNECTION_CALLBACK_HANDLER ConnCallbackFunc() noexcept {
@@ -450,8 +411,8 @@ private:
                                 return RetVal;
                             };
     }
-    Connection(HQUIC Handle, const Registration& Reg) noexcept : Base{Reg.GetApiTable()} {
-        Storage = new(std::nothrow) DataStore{Reg};
+    Connection(HQUIC Handle, const QUIC_API_TABLE* ApiTable) noexcept : Base{ApiTable} {
+        Storage = new(std::nothrow) DataStore{ApiTable};
         if (!*this) return;
         Storage->Connection = Handle;
         AddRef();
@@ -661,15 +622,16 @@ private:
 class Listener : public Base<Listener> {
 private:
     struct DataStore: public Base<Listener>::BaseDataStore {
-        DataStore(const Registration& Reg) noexcept : Registration{Reg} {
+        DataStore(const Registration& Reg) noexcept {
             InitStatus = Reg;
+            ApiTable = Reg.GetApiTable();
         }
         HQUIC Listener {nullptr};
-        quic_function<QUIC_STATUS(ms::quic::Listener&, QUIC_LISTENER_EVENT*)> ListenerCallback;
-        Registration Registration;
+        std::function<QUIC_STATUS(ms::quic::Listener&, QUIC_LISTENER_EVENT*)> ListenerCallback;
+        const QUIC_API_TABLE* ApiTable;
     };
 
-    explicit Listener(DataStore* Store) noexcept : Base{Store->Registration.GetApiTable()}, Storage{Store} {
+    explicit Listener(DataStore* Store) noexcept : Base{Store->ApiTable}, Storage{Store} {
     }
 public:
 
@@ -727,7 +689,7 @@ public:
     }
 
     Connection GetNewConnection(QUIC_LISTENER_EVENT* Event) const noexcept {
-        return Connection{Event->NEW_CONNECTION.Connection, Storage->Registration};
+        return Connection{Event->NEW_CONNECTION.Connection, Storage->ApiTable};
     }
 
     Listener& SetListenerFunc(quic_function<QUIC_STATUS(ms::quic::Listener&, QUIC_LISTENER_EVENT*)> Func) noexcept {
